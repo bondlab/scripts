@@ -1,26 +1,45 @@
 #!/usr/bin/env python
 
 import sys
-import os  														# 'rename' will be accessed via os.rename
+import os														# 'rename' will be accessed via os.rename
 import re
 import glob
 import fileinput
-from Bio import SeqIO, BiopythonParserWarning, BiopythonWarning  # Importing from Bio in one line
+from Bio import SeqIO, BiopythonParserWarning, BiopythonWarning	 # Importing from Bio in one line
 from Bio.Seq import UnknownSeq
 from Bio.SeqUtils import molecular_weight
-import argparse  												# 'RawTextHelpFormatter' will be accessed via argparse.RawTextHelpFormatter
+import argparse													# 'RawTextHelpFormatter' will be accessed via argparse.RawTextHelpFormatter
 import warnings
+
+from Bio import BiopythonWarning
+
+# Suppress the BiopythonWarning about partial codons - may need to modify script to make all CDS be multiples of 3 in the future
+warnings.simplefilter('ignore', BiopythonWarning)
 
 
 # script help and usage
 
-parser=argparse.ArgumentParser(
-    description='This script parses a Genbank file and writes tab-delimited statistics of putative multiheme c-type\ncytochromes (3 or more CXXCH motifs; if this qualification met, counts also CXXXCH motifs)\n\nNOTE: Organisms with multiple Genbank records (e.g. those with multiple chromosomes or plasmids)\nshould be concatenated into a single .gbk file before executing this script. For example:\n% cat NC_000001.gbk NC_000002.gbk [...NC_00000n.gbk] > concatenated.gbk\n\', 
-    epilog='Modified and maintained by Bond Lab, University of Minnesota (https://bondlab.umn.edu)\n', formatter_class=RawTextHelpFormatter)
-parser.add_argument('[GENBANK FILE]', help='Genbank file, ideally containing translated amino acid sequences, but translation will be attempted if not present. Requires SOURCE annotation\nto be present in the header. For example:\n \nLOCUS       NC_002939            3814128 bp    DNA     circular CON 16-MAY-2014\nDEFINITION  Geobacter sulfurreducens PCA chromosome, complete genome.\nACCESSION   NC_002939\nVERSION     NC_002939.5  GI:400756305\nDBLINK      BioProject: PRJNA57743\nKEYWORDS    RefSeq.\nSOURCE      Geobacter sulfurreducens PCA <--- *MUST BE PRESENT* \n  ORGANISM  Geobacter sulfurreducens PCA <--- *MUST BE PRESENT*')
-args=parser.parse_args()
+parser = argparse.ArgumentParser(
+	description='This script parses a Genbank file and writes tab-delimited statistics of putative multiheme c-type '
+				'cytochromes (3 or more CXXCH motifs; if this qualification is met, it also counts CXXXCH motifs).\n\n'
+				'NOTE: Organisms with multiple Genbank records (e.g., those with multiple chromosomes or plasmids) '
+				'should be concatenated into a single .gbk file before executing this script. For example:\n'
+				'% cat NC_000001.gbk NC_000002.gbk [...NC_00000n.gbk] > concatenated.gbk\n',
+	epilog='Modified and maintained by Bond Lab, University of Minnesota (https://bondlab.umn.edu)\n',
+	formatter_class=argparse.RawTextHelpFormatter)
+parser.add_argument('genbank_file', help='Genbank file, ideally containing translated amino acid sequences, but '
+										 'translation will be attempted if not present. Requires SOURCE annotation '
+										 'to be present in the header. For example:\n\n'
+										 'LOCUS		  NC_002939			   3814128 bp	 DNA	 circular CON 16-MAY-2014\n'
+										 'DEFINITION  Geobacter sulfurreducens PCA chromosome, complete genome.\n'
+										 'ACCESSION	  NC_002939\nVERSION	 NC_002939.5  GI:400756305\n'
+										 'DBLINK	  BioProject: PRJNA57743\nKEYWORDS	  RefSeq.\n'
+										 'SOURCE	  Geobacter sulfurreducens PCA <--- *MUST BE PRESENT*\n	 '
+										 'ORGANISM	Geobacter sulfurreducens PCA <--- *MUST BE PRESENT*')
+args = parser.parse_args()
 
-# define input file handle
+
+# open the file, and read the input file name for use in the output filename
 genbankFile = open(sys.argv[1], 'r')
 InputFileName = str(sys.argv[1])
 
@@ -49,31 +68,32 @@ for sequenceRecord in SeqIO.parse(genbankFile, "genbank"):
 	# define output file handle
 	OutFile = open(OutFileName, 'w')
 	
+	
 	# read each feature in the genbank file
 	for feature in sequenceRecord.features:
 	
 		# capture all feature types and append to a long featureList
 		featureList.append(str(feature.type))
 		
-		#takes elements one at a time, such as 'gene', then 'CDS', then 'misc_feature'
+		#takes elements one at a time, features are things like 'gene', then 'CDS', then 'misc_feature'
 		
 		# find unique feature types
 		featureTypes = set(featureList)
 		
 		if feature.type == "CDS": 
 			
-        # Translate protein sequence on the fly if not already present
-        	if 'translation' not in feature.qualifiers:
-           		DNAseq = feature.extract(sequenceRecord.seq)
-           		
-            	# Use transl_table from the qualifiers if available, otherwise default to table 1
-            	transl_table = feature.qualifiers.get("transl_table", "1").strip("[']")
-            	feature.qualifiers["translation"] = DNAseq.translate(table=transl_table, to_stop=True)
+		# Translate protein sequence on the fly if not already present
+			if 'translation' not in feature.qualifiers:
+				DNAseq = feature.extract(sequenceRecord.seq)
+				
+				# Use transl_table default of table 1
+				# transl_table = feature.qualifiers.get("transl_table", "1").strip("[']")
+				feature.qualifiers["translation"] = DNAseq.translate(table=1, to_stop=True)
 			
 			# identify all cannonical CXXCH motifs in protein coding sequences
 			CXXCHmotifs = re.findall('C..CH', str(feature.qualifiers["translation"]))
 			
-			if len(CXXCHmotifs) >= 3: 	# in this case, multiheme is defined as 3 or more hemes. Add it to the list and scan for extra features.
+			if len(CXXCHmotifs) >= 3:	# in this case, multiheme is defined as 3 or more hemes. Add it to the list and scan for extra features.
 			
 				# append the list of multiheme cytochromes each time another is identified
 				multihemeCytochromes.append(feature)
@@ -81,10 +101,10 @@ for sequenceRecord in SeqIO.parse(genbankFile, "genbank"):
 				# identify all CXXXCH motifs in protein coding sequences if they already have at least 3 CXXCH motifs
 				CXXXCHmotifs = re.findall('C...CH', str(feature.qualifiers["translation"]))
 				hemeBindingMotifs = CXXCHmotifs + CXXXCHmotifs
-                
+				
 				# identify all CXCH condensed motifs in protein coding sequences if they already have at least 3 CXXCH motifs
 				CXCHmotifs = re.findall('C.CH', str(feature.qualifiers["translation"]))
-                
+				
 				# identify all omcZ-like CX14CH motifs in protein coding sequences if they already have at least 3 CXXCH motifs
 				CXXXXXXCHmotifs = re.findall('C...........[!=C]..CH', str(feature.qualifiers["translation"]))
 				hemeBindingMotifs = CXCHmotifs + CXXCHmotifs + CXXXXXXCHmotifs + CXXXCHmotifs
@@ -96,7 +116,7 @@ for sequenceRecord in SeqIO.parse(genbankFile, "genbank"):
 				
 				# count number of motifs found in each protein coding sequence
 				motifCount = len(hemeBindingMotifs)
-                
+				
 				# count number of non-standard C--H motifs found in each protein coding sequence
 				oddmotifCount = len(CXCHmotifs + CXXXXXXCHmotifs + CXXXCHmotifs)
 				
@@ -146,13 +166,13 @@ for sequenceRecord in SeqIO.parse(genbankFile, "genbank"):
 	if 'CDS' not in featureTypes:
 		print("%s\tERROR: Genbank file contains no annotations" % OrganismName.replace("_", " ").replace("sp ", "sp. "))
 		os.remove(OutFileName)
-		sys.exit(1)  # Use sys.exit(1) to indicate error condition
+		sys.exit(1)	 # Use sys.exit(1) to indicate error condition
 	
 	# raise error message and exit script if Genbank file contains no DNA sequence to translate from on the fly
 	if type(sequenceRecord.seq) == UnknownSeq:
 		print("%s\tERROR: Genbank file contains unknown DNA sequence" % OrganismName.replace("_", " ").replace("sp ", "sp. "))
 		os.remove(OutFileName)
-		sys.exit(1)  # Use sys.exit(1) to indicate error condition
+		sys.exit(1)	 # Use sys.exit(1) to indicate error condition
 
 
 
@@ -187,7 +207,7 @@ if multihemeCytochromes:
 		for txtFile in OutputFileList:
 			if os.stat(txtFile).st_size > 0:
 				
-				# write a single concatenated .txt file	
+				# write a single concatenated .txt file 
 				os.system("cat "+txtFile+" >> "+ConcatenatedOutFile+"")
 
 			# remove individual txt files produced from each contig
@@ -220,7 +240,9 @@ if multihemeCytochromes:
 	if len(OutputFileList) == 1:
 
 		# rename output file
-		rename(OutFileName, RenamedOutFile)
+		# rename output file
+		os.rename(OutFileName, RenamedOutFile)
+
 
 		# display number of cytochromes identified and output filename
 		print("%s\t%i cytochromes" % (OrganismName.replace("_", " ").replace("sp ", "sp. "), len(multihemeCytochromes)))
